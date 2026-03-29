@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    network_mode: host  # required: SNMP and arp-scan need direct access to local network
+    cap_add:
+      - NET_RAW         # required for arp-scan
+      - NET_ADMIN
+    restart: unless-stopped
