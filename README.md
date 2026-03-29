@@ -203,23 +203,120 @@ Configure `SNMP_MAC_ADDRESS` in `.env` to enable this feature.
 
 ---
 
+## Zion Hub Integration
+
+This section describes how Zion Hub should consume this API.
+
+### Base URL
+
+The API is only accessible over Tailscale — it does not listen on the public internet or the local internal network.
+
+```
+http://100.91.86.31:8001
+ws://100.91.86.31:8001/ws
+```
+
+### 1. Health check
+
+Poll this on Zion Hub startup and periodically to confirm the bridge is reachable before sending commands.
+
+```http
+GET /health
+```
+
+```json
+{
+  "status": "ok",
+  "device": { "ip": "192.168.101.6", "connectivity": "ONLINE" },
+  "websocket": { "active_connections": 1 },
+  "timestamp": "2026-03-29T03:41:07.044356+00:00"
+}
+```
+
+### 2. WebSocket connection
+
+Connect **once** on Zion Hub startup and keep the connection alive. This is the primary channel — instead of polling, Zion Hub reacts to events pushed by the bridge.
+
+```
+WS ws://100.91.86.31:8001/ws
+```
+
+Handle these events:
+
+| Event | When | What Zion Hub should do |
+|-------|------|------------------------|
+| `outlet_state_changed` | Outlet changed state (detected by monitoring or after a command) | Update the outlet state in Zion Hub's database |
+| `monitoring_tick` | Every monitoring cycle | Use as a full state sync / heartbeat |
+| `device_connectivity_changed` | Strip went ONLINE or OFFLINE | Mark strip as unavailable; when it comes back ONLINE, trigger state restoration |
+| `device_ip_changed` | Strip changed IP (DHCP) | Log it — the bridge handles it automatically, no action needed |
+
+**State restoration after power loss:**
+When `device_connectivity_changed` with `status: ONLINE` is received, Zion Hub knows the strip just came back online with all outlets ON by default. It should immediately send the correct `on`/`off` commands for each outlet to restore the expected state.
+
+### 3. Controlling outlets
+
+```http
+POST /outlets/{n}/on
+POST /outlets/{n}/off
+```
+
+Response confirms the real hardware state after the command:
+
+```json
+{ "outlet": 4, "state": "ON" }
+```
+
+Outlets are numbered **1–10**. Returns `503` if the SNMP command fails.
+
+### 4. Reading outlet state
+
+```http
+GET /outlets        → all 10 outlets in parallel
+GET /outlets/{n}    → single outlet
+```
+
+Use this for the initial sync when Zion Hub starts or reconnects.
+
+### 5. Suggested integration flow
+
+```
+Zion Hub starts
+  ├── GET /health → confirm bridge is reachable
+  ├── GET /outlets → sync initial state of all outlets into local DB
+  └── WS /ws → open persistent connection
+
+On WS event "outlet_state_changed"
+  └── update outlet state in Zion Hub DB
+
+On WS event "device_connectivity_changed" { status: "ONLINE" }
+  └── for each outlet → POST /outlets/{n}/on or /off to restore expected state
+
+On WS disconnect
+  └── reconnect with exponential backoff
+
+User action in Zion Hub (toggle outlet)
+  └── POST /outlets/{n}/on or /off → update DB with confirmed state from response
+```
+
+---
+
 ## Observability
 
 All operations are logged with timestamp, level, logger name and message. The log buffer holds the last 1000 entries in memory and is accessible without SSH:
 
 ```bash
 # All recent logs
-curl http://localhost:8001/logs
+curl http://100.91.86.31:8001/logs
 
 # Only errors
-curl "http://localhost:8001/logs?level=ERROR"
+curl "http://100.91.86.31:8001/logs?level=ERROR"
 
 # Search by keyword
-curl "http://localhost:8001/logs?search=outlet+4"
+curl "http://100.91.86.31:8001/logs?search=outlet+4"
 
 # Raw SNMP connectivity test
-curl http://localhost:8001/debug/snmp-test
+curl http://100.91.86.31:8001/debug/snmp-test
 
 # Network scan (see all devices + MACs on the local network)
-curl http://localhost:8001/debug/arp-scan
+curl http://100.91.86.31:8001/debug/arp-scan
 ```

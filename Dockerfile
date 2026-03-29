@@ -17,4 +17,4 @@ COPY app/ ./app/
 
 EXPOSE 8001
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-8001}"]

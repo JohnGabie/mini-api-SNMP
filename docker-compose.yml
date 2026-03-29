@@ -5,6 +5,7 @@ services:
       - .env
     environment:
       - PORT=8001
+      - HOST=100.91.86.31  # bind only to Tailscale interface
     network_mode: host  # required: SNMP and arp-scan need direct access to local network
     cap_add:
       - NET_RAW         # required for arp-scan
